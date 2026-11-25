@@ -1,0 +1,88 @@
+# Значения для umbrella-чарта OpenSandbox (manifests/charts/opensandbox).
+# Скопируйте в values.yaml и правьте под себя. Ключи верхнего уровня — это имена
+# суб-чартов. Полная справка по значениям в docs/deployment/index.md.
+#
+# Важно про реестр: по умолчанию образы чарта лежат в Aliyun. Ниже всё переведено на Docker Hub (docker.io/opensandbox/<component>),
+# есть ещё GHCR: ghcr.io/opensandbox-group/opensandbox/<component>. Если меняете
+# реестр, поменяйте его во всех местах: образы контроллера, сервера, gateway и
+# образы execd/egress/image-committer внутри configToml/snapshot.
+
+base:
+  enabled: true
+
+opensandbox-controller:
+  controller:
+    replicaCount: 1
+    image:
+      repository: opensandbox/controller
+      tag: release-1.2.1
+    snapshot:
+      imageCommitterImage: opensandbox/image-committer:release-1.2.1
+
+# Ingress-gateway обязателен на Kubernetes (поды песочниц — ClusterIP-only,
+# клиентский трафик идёт через gateway). Образ и ресурсы настраиваются.
+ingress-gateway:
+  enabled: true
+  gateway:
+    replicaCount: 1
+    image:
+      repository: opensandbox/ingress
+      tag: release-1.2.1
+    # На маленьком кластере дефолтные requests (прод-масштаб) могут не влезть:
+    # resources:
+    #   requests: {cpu: 100m, memory: 256Mi}
+    #   limits:   {cpu: 1,    memory: 1Gi}
+
+opensandbox-server:
+  server:
+    replicaCount: 1
+    image:
+      repository: opensandbox/server
+      tag: release-1.2.1
+    # API-ключ сервера (сервер не стартует без него в неинтерактивном контейнере).
+    # install.sh создаёт секрет opensandbox-api-key, если задан API_KEY.
+    env:
+      - name: OPENSANDBOX_SERVER_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: opensandbox-api-key
+            key: api-key
+  # Полная конфигурация сервера. Переопределение configToml заменяет ВЕСЬ дефолт —
+  # держите все нужные секции. Здесь включён gVisor через [secure_runtime].
+  configToml: |
+    [server]
+    host = "0.0.0.0"
+    port = 80
+    api_key = ""
+
+    [log]
+    level = "INFO"
+
+    [runtime]
+    type = "kubernetes"
+    execd_image = "opensandbox/execd:release-1.2.1"
+
+    [kubernetes]
+    kubeconfig_path = ""
+    namespace = "opensandbox"          # namespace для рабочих песочниц (создайте его)
+    informer_resync_seconds = 300
+    informer_watch_timeout_seconds = 60
+    workload_provider = "batchsandbox"
+
+    [egress]
+    image = "opensandbox/egress:release-1.2.1"
+    mode = "dns+nft"
+
+    # Изоляция песочниц через gVisor: контроллер ставит runtimeClassName=gvisor.
+    # Требует RuntimeClass gvisor в кластере. Уберите блок для обычного рантайма.
+    # ВНИМАНИЕ: сетевую изоляцию (networkPolicy/egress-sidecar) OpenSandbox на
+    # gVisor дать НЕ может (нужны nftables, которых нет в gVisor) — только Kata/QEMU.
+    [secure_runtime]
+    type = "gvisor"
+    k8s_runtime_class = "gvisor"
+
+# Опциональные компоненты (по умолчанию выключены):
+fast-sandbox:
+  enabled: false                       # Firecracker-рантайм; нужен KVM на нодах
+opensandbox-node-agent:
+  enabled: false

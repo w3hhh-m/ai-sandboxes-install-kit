@@ -1,0 +1,24 @@
+# Простейшая песочница Agent Sandbox под gVisor.
+# Изоляция задаётся через runtimeClassName в podTemplate (здесь — gvisor; для
+# обычного контейнера уберите строку, для Kata поставьте kata). Проверьте, что в
+# кластере есть RuntimeClass: kubectl get runtimeclass gvisor
+#
+# Применить:   kubectl apply -f sandbox-gvisor.yaml
+# Статус:      kubectl get sandbox my-sandbox -o wide
+# Внутрь:      kubectl exec -it pod/my-sandbox -- sh   (имя пода = имя песочницы)
+# Проверка gVisor: kubectl exec my-sandbox -- uname -r   → 4.19.0-gvisor
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: my-sandbox
+spec:
+  podTemplate:
+    spec:
+      runtimeClassName: gvisor          # ← способ изоляции (слой 1)
+      containers:
+        - name: agent
+          image: ghcr.io/astral-sh/uv:python3.12-bookworm
+          command: ["sleep", "infinity"]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits:   {memory: 512Mi}

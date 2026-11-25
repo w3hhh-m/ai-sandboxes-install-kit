@@ -1,0 +1,57 @@
+# Warm-пул Agent Sandbox: шаблон → предгретый пул → claim (быстрая выдача).
+# Требует extensions-часть установки (MODE=standard или extensions).
+#
+#   kubectl apply -f warmpool.yaml
+#   # дождаться готовности пула:
+#   kubectl get sandboxwarmpool serving-pool -o jsonpath='{.status.readyReplicas}'
+#   # claim мгновенно адоптирует предгретую песочницу:
+#   kubectl get sandboxclaim serving-a -o wide
+#
+# Сетевая изоляция «из коробки»: networkPolicyManagement — ЗНАЧЕНИЕ ПО УМОЛЧАНИЮ
+# Managed, то есть политика включается, даже если поле не писать. Она закрывает
+# приватные сети (кластер, соседние поды) и link-local (облачная метадата), а выход
+# в интернет оставляет. Нужен CNI, энфорсящий NetworkPolicy. Unmanaged — отключить.
+#
+# * Политика создаётся ОДНА НА SandboxTemplate и общая для всех его песочниц;
+#   у голого Sandbox без шаблона политики нет вообще.
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: serving-template
+spec:
+  networkPolicyManagement: Managed      # Managed | Unmanaged
+  podTemplate:
+    spec:
+      runtimeClassName: gvisor          # ← изоляция песочниц пула
+      automountServiceAccountToken: false
+      containers:
+        - name: agent
+          image: ghcr.io/astral-sh/uv:python3.12-bookworm
+          command: ["sleep", "infinity"]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits:   {memory: 512Mi}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: serving-pool
+spec:
+  replicas: 2                           # ← размер warm-пула K
+  sandboxTemplateRef:
+    name: serving-template
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxClaim
+metadata:
+  name: serving-a
+spec:
+  warmPoolRef:
+    name: serving-pool
+  lifecycle:
+    # Delete | DeleteForeground | Retain; значение по умолчанию — Retain.
+    # ВАЖНО: политика относится к объекту SandboxClaim, а не к песочнице. Сама
+    # песочница при истечении claim удаляется в любом случае; Retain лишь оставляет
+    # объект claim с условием Ready=False и причиной ClaimExpired.
+    shutdownPolicy: Delete
